@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Helpers
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(resourceData) { return isSignedIn() && resourceData.ownerId == request.auth.uid; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // Validation Blueprints
+    function isValidOrder(data) {
+      return data.keys().hasAll(['customerName', 'phoneNumber', 'address', 'jerseyName', 'teamName', 'size', 'quantity', 'sellingPrice', 'buyingCost', 'deliveryCharge', 'status', 'paymentStatus', 'date', 'createdAt', 'ownerId'])
+        && data.customerName is string && data.customerName.size() <= 200
+        && data.phoneNumber is string && data.phoneNumber.size() <= 50
+        && data.address is string && data.address.size() <= 1000
+        && data.jerseyName is string && data.jerseyName.size() <= 200
+        && data.teamName is string && data.teamName.size() <= 200
+        && data.size is string && data.size.size() <= 10
+        && data.quantity is number && data.quantity > 0
+        && data.sellingPrice is number && data.sellingPrice >= 0
+        && data.buyingCost is number && data.buyingCost >= 0
+        && data.deliveryCharge is number && data.deliveryCharge >= 0
+        && data.status in ['Pending', 'Confirmed', 'Delivered', 'Cancelled']
+        && data.paymentStatus in ['Paid', 'Unpaid']
+        && data.date is string && data.date.size() <= 50
+        && data.ownerId == request.auth.uid;
+    }
+
+    function isValidInventory(data) {
+      return data.keys().hasAll(['name', 'team', 'season', 'size', 'stockQuantity', 'buyingPrice', 'sellingPrice', 'createdAt', 'ownerId'])
+        && data.name is string && data.name.size() <= 200
+        && data.team is string && data.team.size() <= 200
+        && data.season is string && data.season.size() <= 20
+        && data.size is list && data.size.size() <= 10
+        && data.stockQuantity is number && data.stockQuantity >= 0
+        && data.buyingPrice is number && data.buyingPrice >= 0
+        && data.sellingPrice is number && data.sellingPrice >= 0
+        && data.ownerId == request.auth.uid;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['title', 'amount', 'category', 'date', 'createdAt', 'ownerId'])
+        && data.title is string && data.title.size() <= 200
+        && data.amount is number && data.amount >= 0
+        && data.category is string && data.category.size() <= 100
+        && data.date is string && data.date.size() <= 50
+        && data.ownerId == request.auth.uid;
+    }
+
+    // Collection Rules
+    match /orders/{orderId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(orderId) && isValidOrder(incoming()) 
+        && incoming().createdAt == request.time.toMillis().toString(); // Handle string timestamp if that's what JS provides, or better use request.time
+      
+      allow update: if isOwner(existing()) && isValidOrder(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt;
+      
+      allow delete: if isOwner(existing());
+    }
+
+    match /inventory/{itemId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(itemId) && isValidInventory(incoming());
+      allow update: if isOwner(existing()) && isValidInventory(incoming())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing());
+    }
+
+    match /expenses/{expenseId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(expenseId) && isValidExpense(incoming());
+      allow update: if isOwner(existing()) && isValidExpense(incoming())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing());
+    }
+
+    // Allow testing connection
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}
